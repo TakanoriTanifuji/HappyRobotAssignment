@@ -1,8 +1,7 @@
 from flask import Flask, jsonify, request
-import csv
-import json
 import os
 import requests
+import pandas as pd
 from functools import wraps
 
 app = Flask(__name__)
@@ -14,7 +13,6 @@ def require_api_key(function):
     @wraps(function)
     def decorated(*args, **kwargs):
         provided_key = request.headers.get('X-API-Key')
-        print(API_KEY)
         if provided_key == API_KEY:
             return function(*args, **kwargs)
         return jsonify({"error": "Invalid API key"}), 401
@@ -24,11 +22,13 @@ def require_api_key(function):
 @require_api_key
 def get_carrier(mc_number):
     try:
+        # Retrieve carrier information from FMCSA REST API
         url = f"https://mobile.fmcsa.dot.gov/qc/services/carriers/docket-number/{mc_number}"
         response = requests.get(url, params={"webKey":FMCSA_API_KEY})
         if response.status_code == 200:
           response = response.json()
 
+          # if the mc number does not exist, the response will be an empty array
           if response["content"] == []:
             return jsonify({"error": "Carrier not found"}), 404
           
@@ -46,17 +46,20 @@ def get_carrier(mc_number):
         
     except Exception as e:
         return jsonify({"error": str(e)}), 500  
-   
-@app.route("/loads/<string:referece_number>")
+
+@app.route("/loads/<string:reference_number>")
 @require_api_key
-def get_loads(referece_number):
+def get_loads(reference_number):
+    chunksize = 5000
+    csv_file = 'loads.csv'
+    # Retrieve load by reference number using chunked CSV processing
     try:
-      with open("loads.csv", "r") as file:
-        data = csv.DictReader(file)
-        for row in data:
-          if row["reference_number"] == str(referece_number):
-            return jsonify(row)
-        return jsonify({"error": "Load not found"}), 404
+      for chunk in pd.read_csv(csv_file, chunksize=chunksize):
+        matching_rows = chunk[chunk['reference_number'] == reference_number]
+        if not matching_rows.empty:
+          row = matching_rows.iloc[0].to_dict()
+          return jsonify(row)
+      return jsonify({"error": "Load not found"}), 404
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
